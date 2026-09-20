@@ -2,69 +2,83 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 )
 
 func main() {
 	fmt.Println("Spoofing Opera task...")
 
-	client := &http.Client{}
-
-	println("Sending request #1")
-	req, err := http.NewRequest("GET", "https://work.ink/_api/v2/affiliate/operaGX", nil)
+	jar, err := cookiejar.New(nil)
 	if err != nil {
-		fmt.Println("Error creating request:", err)
+		fmt.Println("Cookie error:", err)
+		return
+	}
+
+	transport := &http.Transport{
+		ForceAttemptHTTP2: false,
+		TLSNextProto:      make(map[string]func(string, *tls.Conn) http.RoundTripper),
+	}
+
+	client := &http.Client{
+		Jar:       jar,
+		Transport: transport,
+	}
+
+	fmt.Println("Sending request #1")
+
+	req, err := http.NewRequest(
+		"GET",
+		"https://work.ink/_api/v2/affiliate/operaGX",
+		nil,
+	)
+	if err != nil {
+		fmt.Println("Error on request:", err)
 		return
 	}
 
 	req.Header.Set("User-Agent", "Opera Installer/1.0")
-	req.Header.Set("Host", "work.ink")
+	req.Header.Set("Cache-Control", "no-cache")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Error sending request:", err)
+		fmt.Println("Error on request:", err)
 		return
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
-	fmt.Println("Response status:", resp.Status)
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return
-	}
-	//fmt.Printf("Response body: %s\n", body)
+	fmt.Println("Response #1:", resp.Status)
 
-	println("Sending request #2")
+	fmt.Println("\nSending request #2")
+
 	jsonData := []byte(`{"noteligible":true}`)
 
 	req, err = http.NewRequest(
 		"POST",
 		"https://work.ink/_api/v2/callback/operaGX",
-		bytes.NewBuffer(jsonData),
+		bytes.NewReader(jsonData),
 	)
 	if err != nil {
-		fmt.Println("Error creating request:", err)
+		fmt.Println("Error on request:", err)
 		return
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Opera Installer/1.0")
+	req.Header.Set("Cache-Control", "no-cache")
 
 	resp, err = client.Do(req)
 	if err != nil {
-		fmt.Println("Error sending request:", err)
+		fmt.Println("Error on request:", err)
 		return
 	}
-	defer resp.Body.Close()
 
-	fmt.Println("Response status:", resp.Status)
-	body, err = io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return
-	}
-	fmt.Printf("Response body: %s\n", body)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	fmt.Println("Response #2:", resp.Status)
+	fmt.Println("Response #2 body:", string(body))
 }
