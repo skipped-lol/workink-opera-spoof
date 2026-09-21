@@ -1,84 +1,78 @@
 package main
 
 import (
-	"bytes"
-	"crypto/tls"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/cookiejar"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+var (
+	inetdll  = windows.NewLazySystemDLL("wininet.dll")
+	intopen  = inetdll.NewProc("InternetOpenA")
+	incon    = inetdll.NewProc("InternetConnectA")
+	openreq  = inetdll.NewProc("HttpOpenRequestA")
+	sendreq  = inetdll.NewProc("HttpSendRequestA")
+	closeint = inetdll.NewProc("InternetCloseHandle")
+	intread  = inetdll.NewProc("InternetReadFile")
 )
 
 func main() {
 	fmt.Println("Spoofing Opera task...")
 
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		fmt.Println("Cookie error:", err)
+	ua := "Opera Installer/1.0\x00"
+	host := "work.ink\x00"
+	path := "/_api/v2/callback/operaGX\x00"
+	verb := "POST\x00"
+
+	win, _, _ := intopen.Call(uintptr(unsafe.Pointer(&[]byte(ua)[0])), 1, 0, 0, 0)
+	if win == 0 {
+		fmt.Println("failed.")
+		return
+	}
+	defer closeint.Call(win)
+
+	connect, _, _ := incon.Call(win, uintptr(unsafe.Pointer(&[]byte(host)[0])), 443, 0, 0, 3, 0, 0)
+	if connect == 0 {
+		fmt.Println("failed.")
+		return
+	}
+	defer closeint.Call(connect)
+
+	var dwFlags uintptr = 0x80800000
+
+	reqwest, _, _ := openreq.Call(connect, uintptr(unsafe.Pointer(&[]byte(verb)[0])), uintptr(unsafe.Pointer(&[]byte(path)[0])), 0, 0, 0, dwFlags, 0)
+	if reqwest == 0 {
+		fmt.Println("Failed to open HTTP request")
+		return
+	}
+	defer closeint.Call(reqwest)
+
+	headers := "Content-Type: application/json\r\nCache-Control: no-cache\r\n\x00"
+	body := `{"noteligible":false}`
+
+	success, _, _ := sendreq.Call(reqwest, uintptr(unsafe.Pointer(&[]byte(headers)[0])), uintptr(len(headers)-1), uintptr(unsafe.Pointer(&[]byte(body)[0])), uintptr(len(body)))
+
+	if success == 0 {
+		fmt.Println("req failed.")
 		return
 	}
 
-	transport := &http.Transport{
-		ForceAttemptHTTP2: false,
-		TLSNextProto:      make(map[string]func(string, *tls.Conn) http.RoundTripper),
+	var buf [4096]byte
+	var bytesRead uint32
+	var finalBody string
+
+	for {
+		res, _, _ := intread.Call(reqwest, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&bytesRead)))
+		if res == 0 || bytesRead == 0 {
+			break
+		}
+		finalBody += string(buf[:bytesRead])
 	}
 
-	client := &http.Client{
-		Jar:       jar,
-		Transport: transport,
-	}
+	fmt.Println("Response:", finalBody)
 
-	fmt.Println("Sending request #1")
-
-	req, err := http.NewRequest(
-		"GET",
-		"https://work.ink/_api/v2/affiliate/operaGX",
-		nil,
-	)
-	if err != nil {
-		fmt.Println("Error on request:", err)
-		return
-	}
-
-	req.Header.Set("User-Agent", "Opera Installer/1.0")
-	req.Header.Set("Cache-Control", "no-cache")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Println("Error on request:", err)
-		return
-	}
-	resp.Body.Close()
-
-	fmt.Println("Response #1:", resp.Status)
-
-	fmt.Println("\nSending request #2")
-
-	jsonData := []byte(`{"noteligible":true}`)
-
-	req, err = http.NewRequest(
-		"POST",
-		"https://work.ink/_api/v2/callback/operaGX",
-		bytes.NewReader(jsonData),
-	)
-	if err != nil {
-		fmt.Println("Error on request:", err)
-		return
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Opera Installer/1.0")
-	req.Header.Set("Cache-Control", "no-cache")
-
-	resp, err = client.Do(req)
-	if err != nil {
-		fmt.Println("Error on request:", err)
-		return
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	fmt.Println("Response #2:", resp.Status)
-	fmt.Println("Response #2 body:", string(body))
+	fmt.Println("Finished! Refresh the work.ink page. This window will close in 5 seconds.")
+	time.Sleep(5 * time.Second)
 }
